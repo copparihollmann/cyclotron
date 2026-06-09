@@ -127,7 +127,7 @@ flight) instead of the blanket `pending_execute` one-in-flight gate, so independ
 throughput still bounded by the execute queue). Loads register `scoreboard[rd]=ready_at` (so dependent
 ops wait under real/DRAM latency; no-op for L1 hits). Result: matmul-naive 633k→**395k** vs RTL 294k —
 compute over-count **2.16×→1.34×**; memory-bound bw unchanged; all kernels isa-test pass; ranking
-preserved. RAW-only is correct for in-order issue (WAW = last writer; WAR needs no stall).
+preserved. RAW-only is correct for in-order issue (WAW = last writer; WAR needs no stall). VALIDATED: 2-core lockstep difftest (vecadd) 0 fails / 700 insts -> timing-only change, functional values unaffected.
 
 **Remaining (~1.34×, ~1 IPC/core vs RTL 1.34):** a further per-core issue / shared-resource limit
 (empirically NOT execute-latency, execute-throughput, load latency, or icache fetch bandwidth) — needs
