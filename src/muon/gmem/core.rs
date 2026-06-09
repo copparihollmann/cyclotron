@@ -108,6 +108,7 @@ impl CoreTimingModel {
             pending_gmem: vec![VecDeque::new(); num_warps],
             pending_smem: vec![VecDeque::new(); num_warps],
             pending_execute: vec![None; num_warps],
+            scoreboard: vec![vec![0 as Cycle; 256]; num_warps], // #33: 256 arch regs/warp
             gmem_issue_cycle: std::collections::HashMap::new(),
             smem_issue_cycle: std::collections::HashMap::new(),
             core_id,

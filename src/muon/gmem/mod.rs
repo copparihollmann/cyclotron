@@ -35,6 +35,10 @@ pub struct CoreTimingModel {
     pending_gmem: Vec<VecDeque<(u64, Cycle)>>,
     pending_smem: Vec<VecDeque<(u64, Cycle)>>,
     pending_execute: Vec<Option<Cycle>>,
+    // #33 ILP: per-warp register scoreboard [warp][arch_reg] -> ready_at (0 = ready). Replaces the
+    // blanket pending_execute one-in-flight stall: independent execute ops overlap; only true RAW
+    // deps (a source still in flight) stall the warp.
+    scoreboard: Vec<Vec<Cycle>>,
     gmem_issue_cycle: HashMap<u64, Cycle>,
     smem_issue_cycle: HashMap<u64, Cycle>,
     core_id: usize,

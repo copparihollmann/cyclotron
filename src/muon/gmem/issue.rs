@@ -275,27 +275,34 @@ impl CoreTimingModel {
             None => return Ok(Ticket::new(now, now, active_lanes.max(1))),
         };
 
-        if let Some(ready_at) = self.pending_execute[warp] {
-            if now >= ready_at {
-                self.pending_execute[warp] = None;
-                self.trace_event(now, "exec_complete", warp, None, active_lanes, None);
-                self.update_scheduler_state(warp, scheduler);
-                return Ok(Ticket::new(now, now, active_lanes.max(1)));
-            }
-            scheduler.set_resource_wait_until(warp, Some(ready_at));
+        // #33 ILP: stall only on a true RAW dependency (a source register still in flight), not on
+        // the previous execute op completing. Independent ops overlap; unit throughput is bounded by
+        // graph.execute_issue's queue below.
+        let sb = &self.scoreboard[warp];
+        let dep_ready = [
+            issued.rs1_addr,
+            issued.rs2_addr,
+            issued.rs3_addr,
+            issued.rs4_addr,
+        ]
+        .iter()
+        .filter(|&&r| r != 0 && (r as usize) < sb.len())
+        .map(|&r| sb[r as usize])
+        .max()
+        .unwrap_or(0);
+        if dep_ready > now {
+            scheduler.set_resource_wait_until(warp, Some(dep_ready));
             scheduler.replay_instruction(warp);
-            return Err(ready_at);
+            return Err(dep_ready);
         }
 
         match self.graph.execute_issue(now, kind, active_lanes) {
             Ok(ticket) => {
                 let ready_at = ticket.ready_at();
-                if ready_at > now {
-                    self.pending_execute[warp] = Some(ready_at);
-                    scheduler.set_resource_wait_until(warp, Some(ready_at));
-                    scheduler.replay_instruction(warp);
-                    self.trace_event(now, "exec_issue", warp, None, active_lanes, None);
-                    return Err(ready_at);
+                // record result availability; do NOT stall the warp (allow overlap)
+                let rd = issued.rd_addr as usize;
+                if issued.rd_addr != 0 && rd < self.scoreboard[warp].len() {
+                    self.scoreboard[warp][rd] = ready_at;
                 }
                 self.trace_event(now, "exec_issue", warp, None, active_lanes, None);
                 Ok(ticket)
