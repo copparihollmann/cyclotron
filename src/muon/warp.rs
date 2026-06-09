@@ -113,6 +113,7 @@ struct TimedMemIssue {
     opcode: u8,
     opext: u8,
     rs1_addr: u8,
+    rd_addr: u8, // #33: load dest reg, for the ILP scoreboard
     imm32: u32,
     active_lanes: u32,
     bytes_per_lane: u32,
@@ -653,6 +654,7 @@ impl Warp {
             opcode: decoded.opcode,
             opext: decoded.opext,
             rs1_addr: decoded.rs1_addr,
+            rd_addr: decoded.rd_addr,
             imm32: decoded.imm32,
             active_lanes,
             bytes_per_lane,
@@ -685,10 +687,14 @@ impl Warp {
         request.addr = issue.lane_addrs.iter().copied().min().unwrap_or(0);
         request.lane_addrs = Some(issue.lane_addrs.clone());
 
-        timing_model
-            .issue_gmem_request(now, self.wid, request, scheduler)
-            .map(|_| ())
-            .map_err(|_| ())
+        let r = timing_model.issue_gmem_request(now, self.wid, request, scheduler);
+        // #33 ILP: register the load's dest reg so dependent ops wait for it (and overlap otherwise).
+        if let Ok(ref ticket) = r {
+            if issue.opcode == Opcode::LOAD && issue.rd_addr != 0 {
+                timing_model.set_scoreboard(self.wid, issue.rd_addr, ticket.ready_at());
+            }
+        }
+        r.map(|_| ()).map_err(|_| ())
     }
 
     fn route_mem_to_smem(&self, decoded: &DecodedInst) -> bool {

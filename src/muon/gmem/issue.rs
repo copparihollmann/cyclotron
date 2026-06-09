@@ -255,6 +255,17 @@ impl CoreTimingModel {
         }
     }
 
+    /// #33 ILP: record that warp's arch register `rd` becomes available at `ready_at` (e.g. a load
+    /// result). Consumers gate on this in issue_execute; independent ops overlap.
+    pub fn set_scoreboard(&mut self, warp: usize, rd: u8, ready_at: Cycle) {
+        if let Some(sb) = self.scoreboard.get_mut(warp) {
+            let rd = rd as usize;
+            if rd < sb.len() {
+                sb[rd] = ready_at;
+            }
+        }
+    }
+
     pub fn issue_execute(
         &mut self,
         now: Cycle,
