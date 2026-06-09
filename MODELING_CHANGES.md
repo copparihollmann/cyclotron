@@ -119,7 +119,21 @@ this PR use the corrected /2000 conversion.
 
 ---
 
-## 7. Known fidelity gap & future work — #23 / #33 (NOT in this PR)
+## 7. Intra-warp ILP scoreboard (#23 / #33) — partial, in this PR
+
+`src/muon/gmem/{mod,core}.rs` + `issue.rs` + `warp.rs`: per-warp register scoreboard `[warp][reg]
+-> ready_at`. `issue_execute` now stalls only on a true RAW dependency (a source register still in
+flight) instead of the blanket `pending_execute` one-in-flight gate, so independent ops overlap (unit
+throughput still bounded by the execute queue). Loads register `scoreboard[rd]=ready_at` (so dependent
+ops wait under real/DRAM latency; no-op for L1 hits). Result: matmul-naive 633k→**395k** vs RTL 294k —
+compute over-count **2.16×→1.34×**; memory-bound bw unchanged; all kernels isa-test pass; ranking
+preserved. RAW-only is correct for in-order issue (WAW = last writer; WAR needs no stall).
+
+**Remaining (~1.34×, ~1 IPC/core vs RTL 1.34):** a further per-core issue / shared-resource limit
+(empirically NOT execute-latency, execute-throughput, load latency, or icache fetch bandwidth) — needs
+profiling. Candidate: the `allow_fetch` one-fetch-in-flight-per-warp gate or a per-core dispatch limit.
+
+## (prior) Known fidelity gap — #23 / #33 background
 
 With the corrected clock, the clean RTL anchor is matmul-naive = **293,521 tile cycles** vs cyclotron
 ~644k → **cyclotron OVER-counts compute-bound kernels ~2.2×** (it under-counts nothing; the earlier
