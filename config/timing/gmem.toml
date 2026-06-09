@@ -90,8 +90,8 @@ bytes_per_cycle = 64
 queue_capacity = 4
 
 [gmem.nodes.dram]
-base_latency = 200
-bytes_per_cycle = 32
+base_latency = 40
+bytes_per_cycle = 4
 queue_capacity = 64
 
 [gmem.nodes.return_path]
@@ -190,7 +190,7 @@ l1_line_bytes = 32
 l2_line_bytes = 32
 
 # cache sets/ways
-l0_sets = 512
+l0_sets = 64
 l0_ways = 1
 l1_sets = 512
 l1_ways = 4

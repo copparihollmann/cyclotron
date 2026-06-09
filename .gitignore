@@ -22,3 +22,6 @@ performance_logs
 
 # logs from run-isa-tests.sh
 logs/
+
+# trace-db artifacts emitted by --gen-trace / +trace-db runs
+*.sqlite

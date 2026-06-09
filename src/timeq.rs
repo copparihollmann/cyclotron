@@ -116,6 +116,12 @@ pub struct ServerConfig {
     pub completions_per_cycle: u32,
     // Optional warm-up latency before the first request can issue
     pub warmup_latency: Cycle,
+    // Minimum service cycles each request occupies the server, regardless of size.
+    // Models a per-REQUEST rate limit (e.g. "1 request every N cycles") independent of
+    // byte bandwidth: effective service = max(ceil(bytes/bytes_per_cycle), cycles_per_request).
+    // 0 = disabled (pure byte-bandwidth throttling). Use to match RTL where each access has
+    // a fixed occupancy (DRAM command issue, cache port, limited coalescing).
+    pub cycles_per_request: Cycle,
 }
 
 impl Default for ServerConfig {
@@ -126,6 +132,7 @@ impl Default for ServerConfig {
             queue_capacity: 1,
             completions_per_cycle: u32::MAX,
             warmup_latency: 0,
+            cycles_per_request: 0,
         }
     }
 }
@@ -208,7 +215,8 @@ impl<T> TimedServer<T> {
         let service_cycles = ceil_div_u64(
             request.size_bytes as u64,
             self.config.bytes_per_cycle as u64,
-        );
+        )
+        .max(self.config.cycles_per_request);
         let ready_at = start
             .saturating_add(self.config.base_latency)
             .saturating_add(service_cycles);

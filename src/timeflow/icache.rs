@@ -106,6 +106,7 @@ impl Default for IcacheFlowConfig {
                 queue_capacity: 16,
                 completions_per_cycle: u32::MAX,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             miss: ServerConfig {
                 base_latency: 40,
@@ -113,6 +114,7 @@ impl Default for IcacheFlowConfig {
                 queue_capacity: 8,
                 completions_per_cycle: u32::MAX,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             policy: IcachePolicyConfig::default(),
         }

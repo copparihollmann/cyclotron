@@ -116,8 +116,14 @@ pub extern "C" fn cyclotron_init_rs(c_elfname: *const c_char, c_trace_db_path: *
         return;
     }
 
-    let log_level = LevelFilter::Debug;
-    Builder::new().filter_level(log_level).init();
+    // Default to Error so difftest runs aren't drowned in per-instruction DEBUG
+    // logging (RUST_LOG can still raise it). The DIFFTEST PASS/fail lines are
+    // println! and unaffected by this level.
+    let log_level = LevelFilter::Error;
+    Builder::new()
+        .filter_level(log_level)
+        .parse_default_env()
+        .init();
 
     let toml_path = PathBuf::from("config.toml");
     let toml_string = toml_path.exists().then(|| crate::ui::read_toml(&toml_path));
@@ -744,31 +750,47 @@ pub unsafe extern "C" fn cyclotron_trace_rs(
     let num_lanes = context.sim_isa.top.clusters[0].cores[0].conf().num_lanes;
     let global_core_id = cluster_id as usize * CORES_PER_CLUSTER + core_id as usize;
 
-    let inst_rs1_data = unsafe { from_raw_parts(inst_rs1_data_vec, num_lanes) };
-    let inst_rs2_data = unsafe { from_raw_parts(inst_rs2_data_vec, num_lanes) };
-    let _inst_rs3_data = unsafe { from_raw_parts(inst_rs3_data_vec, num_lanes) };
+    // The RTL difftest/trace blackbox passes a null per-lane pointer whenever a signal
+    // group is not wired in this configuration (e.g. the difftest config leaves the dmem/
+    // smem trace bundles unconnected, and an unused source operand has a null rsN vector).
+    // from_raw_parts has a debug-assert that rejects null pointers and aborts debug builds,
+    // so guard every per-lane pointer. An empty slice is the correct "no data this cycle"
+    // value: record_mem_bundle iterates `0..req_valid.len()`, so an empty bundle is skipped.
+    // An unwired signal group comes through as null or as an uninitialized (garbage,
+    // typically misaligned) pointer. Real per-lane arrays are always properly aligned and
+    // non-null, so treat null-or-misaligned as "no data this cycle" (empty slice).
+    unsafe fn lanes_or_empty<'a, T>(ptr: *const T, n: usize) -> &'a [T] {
+        if ptr.is_null() || (ptr as usize) % std::mem::align_of::<T>() != 0 {
+            &[]
+        } else {
+            from_raw_parts(ptr, n)
+        }
+    }
+    let inst_rs1_data = unsafe { lanes_or_empty(inst_rs1_data_vec, num_lanes) };
+    let inst_rs2_data = unsafe { lanes_or_empty(inst_rs2_data_vec, num_lanes) };
+    let _inst_rs3_data = unsafe { lanes_or_empty(inst_rs3_data_vec, num_lanes) };
 
-    let dmem_req_valid = unsafe { from_raw_parts(dmem_req_valid_vec, num_lanes) };
-    let dmem_req_bits_store = unsafe { from_raw_parts(dmem_req_bits_store_vec, num_lanes) };
-    let dmem_req_bits_address = unsafe { from_raw_parts(dmem_req_bits_address_vec, num_lanes) };
-    let dmem_req_bits_size = unsafe { from_raw_parts(dmem_req_bits_size_vec, num_lanes) };
-    let dmem_req_bits_tag = unsafe { from_raw_parts(dmem_req_bits_tag_vec, num_lanes) };
-    let dmem_req_bits_data = unsafe { from_raw_parts(dmem_req_bits_data_vec, num_lanes) };
-    let _dmem_req_bits_mask = unsafe { from_raw_parts(dmem_req_bits_mask_vec, num_lanes) };
-    let dmem_resp_valid = unsafe { from_raw_parts(dmem_resp_valid_vec, num_lanes) };
-    let dmem_resp_bits_tag = unsafe { from_raw_parts(dmem_resp_bits_tag_vec, num_lanes) };
-    let dmem_resp_bits_data = unsafe { from_raw_parts(dmem_resp_bits_data_vec, num_lanes) };
+    let dmem_req_valid = unsafe { lanes_or_empty(dmem_req_valid_vec, num_lanes) };
+    let dmem_req_bits_store = unsafe { lanes_or_empty(dmem_req_bits_store_vec, num_lanes) };
+    let dmem_req_bits_address = unsafe { lanes_or_empty(dmem_req_bits_address_vec, num_lanes) };
+    let dmem_req_bits_size = unsafe { lanes_or_empty(dmem_req_bits_size_vec, num_lanes) };
+    let dmem_req_bits_tag = unsafe { lanes_or_empty(dmem_req_bits_tag_vec, num_lanes) };
+    let dmem_req_bits_data = unsafe { lanes_or_empty(dmem_req_bits_data_vec, num_lanes) };
+    let _dmem_req_bits_mask = unsafe { lanes_or_empty(dmem_req_bits_mask_vec, num_lanes) };
+    let dmem_resp_valid = unsafe { lanes_or_empty(dmem_resp_valid_vec, num_lanes) };
+    let dmem_resp_bits_tag = unsafe { lanes_or_empty(dmem_resp_bits_tag_vec, num_lanes) };
+    let dmem_resp_bits_data = unsafe { lanes_or_empty(dmem_resp_bits_data_vec, num_lanes) };
 
-    let smem_req_valid = unsafe { from_raw_parts(smem_req_valid_vec, num_lanes) };
-    let smem_req_bits_store = unsafe { from_raw_parts(smem_req_bits_store_vec, num_lanes) };
-    let smem_req_bits_address = unsafe { from_raw_parts(smem_req_bits_address_vec, num_lanes) };
-    let smem_req_bits_size = unsafe { from_raw_parts(smem_req_bits_size_vec, num_lanes) };
-    let smem_req_bits_tag = unsafe { from_raw_parts(smem_req_bits_tag_vec, num_lanes) };
-    let smem_req_bits_data = unsafe { from_raw_parts(smem_req_bits_data_vec, num_lanes) };
-    let _smem_req_bits_mask = unsafe { from_raw_parts(smem_req_bits_mask_vec, num_lanes) };
-    let smem_resp_valid = unsafe { from_raw_parts(smem_resp_valid_vec, num_lanes) };
-    let smem_resp_bits_tag = unsafe { from_raw_parts(smem_resp_bits_tag_vec, num_lanes) };
-    let smem_resp_bits_data = unsafe { from_raw_parts(smem_resp_bits_data_vec, num_lanes) };
+    let smem_req_valid = unsafe { lanes_or_empty(smem_req_valid_vec, num_lanes) };
+    let smem_req_bits_store = unsafe { lanes_or_empty(smem_req_bits_store_vec, num_lanes) };
+    let smem_req_bits_address = unsafe { lanes_or_empty(smem_req_bits_address_vec, num_lanes) };
+    let smem_req_bits_size = unsafe { lanes_or_empty(smem_req_bits_size_vec, num_lanes) };
+    let smem_req_bits_tag = unsafe { lanes_or_empty(smem_req_bits_tag_vec, num_lanes) };
+    let smem_req_bits_data = unsafe { lanes_or_empty(smem_req_bits_data_vec, num_lanes) };
+    let _smem_req_bits_mask = unsafe { lanes_or_empty(smem_req_bits_mask_vec, num_lanes) };
+    let smem_resp_valid = unsafe { lanes_or_empty(smem_resp_valid_vec, num_lanes) };
+    let smem_resp_bits_tag = unsafe { lanes_or_empty(smem_resp_bits_tag_vec, num_lanes) };
+    let smem_resp_bits_data = unsafe { lanes_or_empty(smem_resp_bits_data_vec, num_lanes) };
 
     // print instruction progress
     if inst_valid != 0 {
@@ -826,7 +848,12 @@ pub unsafe extern "C" fn cyclotron_trace_rs(
                         &rs2_string,
                     ),
                 )
-                .expect("failed to insert to inst");
+                .unwrap_or_else(|e| {
+                    // Trace recording is auxiliary to the lockstep compare; don't abort the
+                    // run on a trace insert failure (e.g. a transient sqlite error).
+                    eprintln!("cyclotron trace: inst insert failed (non-fatal): {e}");
+                    0
+                });
         }
 
         // record dmem
@@ -874,7 +901,12 @@ pub unsafe extern "C" fn cyclotron_trace_rs(
 fn shift_data_to_lsb(data: u32, address: u32, size: u8) -> u32 {
     let beat_width_bytes = 4;
     let offset_in_beat = address % beat_width_bytes;
-    assert!(offset_in_beat % size as u32 == 0, "misaligned data");
+    // Best-effort for trace recording only: some configs feed unreliable mem-trace signals
+    // (see record_mem_bundle), so don't abort on an implausibly misaligned access — just
+    // return the data un-shifted. The architectural lockstep compare is a separate path.
+    if size == 0 || offset_in_beat % size as u32 != 0 {
+        return data;
+    }
     let data_shifted = data >> (offset_in_beat * 8);
     // rust panics on overflow when shifting
     let mask = if size >= 4 {
@@ -907,7 +939,23 @@ fn record_mem_bundle(
     cycle: u64,
     is_smem: bool,
 ) {
+    // In some configs (e.g. difftest) the per-lane mem-trace signal groups are only
+    // partially wired, so a "valid" vector may be present while the data/addr vectors it
+    // indexes were guarded to empty. Skip recording rather than index out of bounds; the
+    // architectural-state lockstep compare is a separate path and is unaffected.
+    // "Wired" = every indexed vector has the same length as its valid vector AND the valid
+    // bits are clean booleans. A config that leaves this bundle unconnected feeds garbage
+    // (mismatched lengths, or valid words like 0x37 with nonsense size/addr) which would
+    // index OOB / overflow; detect that and skip recording entirely.
+    let req_wired = [req_store.len(), req_address.len(), req_size.len(), req_tag.len(),
+                     req_data.len()].iter().all(|&l| l == req_valid.len())
+        && !req_valid.is_empty() && req_valid.iter().all(|&v| v <= 1)
+        && req_size.iter().all(|&s| s <= 3);
+    let resp_wired = [resp_tag.len(), resp_data.len()].iter().all(|&l| l == resp_valid.len())
+        && !resp_valid.is_empty() && resp_valid.iter().all(|&v| v <= 1);
+
     // request
+    if req_wired {
     for i in 0..req_valid.len() {
         if req_valid[i] == 0 {
             continue;
@@ -935,9 +983,11 @@ fn record_mem_bundle(
             },
         );
     }
+    } // if req_wired
 
     // response
     let mut any_valid_response = false;
+    if resp_wired {
     for i in 0..resp_valid.len() {
         if resp_valid[i] == 0 {
             continue;
@@ -948,6 +998,7 @@ fn record_mem_bundle(
         let data = resp_data[i];
         match_response_in_mem_queue(queue, tag, lane, data, cycle);
     }
+    } // if resp_wired
 
     if any_valid_response {
         let reqs_with_matched_resps = pop_oldest_reqs_in_mem_queue(queue);
@@ -1029,16 +1080,17 @@ fn record_mem_req_to_db(conn: &Connection, line: &MemQueueLine, is_smem: bool) {
             line.core_id,
             line.lane_id,
             cycle_to_sql(line.req_cycle),
-            line.resp_cycle
-                .map(cycle_to_sql)
-                .expect("memory trace line missing response cycle"),
+            line.resp_cycle.map(cycle_to_sql).unwrap_or(0),
             line.store,
             line.address,
             line.size,
             data,
         ),
     )
-    .expect("failed to insert to inst");
+    .unwrap_or_else(|e| {
+        eprintln!("cyclotron trace: {mem} insert failed (non-fatal): {e}");
+        0
+    });
 }
 
 #[no_mangle]

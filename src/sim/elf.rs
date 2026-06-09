@@ -6,6 +6,10 @@ use std::{collections::HashMap, fs};
 
 pub struct ElfBackedMem {
     pub sections: HashMap<(usize, usize), Vec<u8>>,
+    /// (addr, size) of the user kernel entry (symbol containing "kernel_body"),
+    /// used to statically check architectural-register pressure against the RTL
+    /// physical register file. None if the symbol is absent.
+    pub kernel_body: Option<(usize, usize)>,
 }
 
 impl HasMemory for ElfBackedMem {
@@ -33,6 +37,7 @@ impl ElfBackedMem {
     pub fn new(path: &Path) -> ElfBackedMem {
         let mut me = ElfBackedMem {
             sections: Default::default(),
+            kernel_body: None,
         };
         me.load_path(path.as_ref())
             .expect(&format!("Elf file {:?} not found", path));
@@ -44,6 +49,16 @@ impl ElfBackedMem {
         let elf = Elf::parse(&data).map_err(|e| format!("Failed to parse ELF file: {}", e))?;
 
         self.sections = HashMap::new();
+
+        // Locate the user kernel entry symbol (mangled name contains "kernel_body")
+        // so its instruction range can be scanned for register pressure.
+        for sym in &elf.syms {
+            let name = elf.strtab.get_at(sym.st_name).unwrap_or_default();
+            if name.contains("kernel_body") && sym.st_size > 0 {
+                self.kernel_body = Some((sym.st_value as usize, sym.st_size as usize));
+                break;
+            }
+        }
 
         // Iterate over the ELF sections
         for section in &elf.section_headers {

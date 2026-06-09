@@ -29,6 +29,21 @@ pub struct WarpState {
     pub csr_file: Vec<CSRFile>,
 }
 
+// --- Cross-core SMEM coherence hazard detector (#32) -----------------------------------------
+// cyclotron models SMEM as one instantly-coherent FlatMemory shared by all cores, and treats
+// fence.s functionally as a no-op. The RTL has per-core SMEM write buffers that only become
+// cross-core-visible after fence.s. So cyclotron silently accepts kernels that read another
+// core's SMEM writes without an intervening fence.s -> RTL reads stale (the conv difftest bug).
+// This tracker flags that hazard (warning-only: it does NOT change any value, so it cannot
+// affect functional/difftest correctness). Single-cluster, single-process assumption.
+// Map: aligned SMEM addr -> (writer core_id, visible-cross-core since a fence.s by that core).
+static SMEM_COH: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u32, (usize, bool)>>> =
+    std::sync::OnceLock::new();
+static SMEM_COH_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn smem_coh() -> &'static std::sync::Mutex<std::collections::HashMap<u32, (usize, bool)>> {
+    SMEM_COH.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 pub struct Warp {
     pub base: ModuleBase<WarpState, MuonConfig>,
     pub wid: usize,
@@ -420,13 +435,24 @@ impl Warp {
         neutrino: &mut Neutrino,
     ) -> ExWriteback {
         let core_id = self.conf().lane_config.core_id;
+        // #32: fence.s makes this core's staged SMEM writes visible to other cores. Detect it
+        // before `issued` is moved into ExecuteUnit::execute.
+        let is_fence_s = issued.opcode == Opcode::MISC_MEM && issued.f3 == 2;
         let rf = self.base.state.reg_file.as_mut_slice();
         let csrf = self.base.state.csr_file.as_mut_slice();
 
         // ALU/FPU/AddrGen stage
-        ExecuteUnit::execute(
+        let wb = ExecuteUnit::execute(
             issued, core_id, self.wid, tmask, rf, csrf, scheduler, neutrino,
-        )
+        );
+        if is_fence_s {
+            for (_, v) in smem_coh().lock().unwrap().iter_mut() {
+                if v.0 == core_id {
+                    v.1 = true;
+                }
+            }
+        }
+        wb
     }
 
     /// Memory stage; serve the memory requests produced in EX.
@@ -474,6 +500,7 @@ impl Warp {
                     address: req.addr,
                     size: req.size,
                     data: trace_mem_data(req, resp),
+                    cycle: 0, // stamped with the issue cycle in MemTracer::record
                 })
             })
             .collect::<Vec<_>>();
@@ -540,11 +567,38 @@ impl Warp {
             }
             .expect("store failed");
 
+            // #32 hazard tracking: record which core staged this SMEM word (not yet
+            // cross-core-visible until that core executes a fence.s).
+            if mem_req.is_smem {
+                let core = self.conf().lane_config.core_id;
+                smem_coh().lock().unwrap().insert(addr_aligned, (core, false));
+            }
+
             MemResponse {
                 data: None,
                 is_sext: mem_req.is_sext, // pass-through
             }
         } else {
+            // #32 hazard detection: a load of SMEM staged by ANOTHER core with no intervening
+            // fence.s would read stale on RTL. Warn (value is left correct — observability only).
+            if mem_req.is_smem {
+                let core = self.conf().lane_config.core_id;
+                if let Some(&(writer, visible)) = smem_coh().lock().unwrap().get(&addr_aligned) {
+                    if writer != core
+                        && !visible
+                        && !SMEM_COH_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        warn!(
+                            "[SMEM-COHERENCE #32] core {} reads SMEM @{:#x} staged by core {} \
+                             with no intervening fence.s -> RTL reads STALE here. Missing the \
+                             cross-core staging pattern: mu_fence_smem(); mu_barrier(0, total_warps). \
+                             (further such warnings suppressed)",
+                            core, addr_aligned, writer
+                        );
+                    }
+                }
+            }
+
             let load_data = mem.read_n::<4>(addr_aligned as usize).expect("load failed");
 
             // byte-masking will be handled in Execute::mem

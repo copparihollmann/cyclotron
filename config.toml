@@ -3,6 +3,7 @@ num_lanes = 16
 num_warps = 8
 num_cores = 2
 num_regs = 256
+num_phys_regs = 256
 start_pc = 0x10000000
 
 [mem]

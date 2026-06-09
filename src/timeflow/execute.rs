@@ -20,6 +20,7 @@ impl Default for ExecutePipelineConfig {
                 queue_capacity: 4,
                 completions_per_cycle: 1,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             int_mul: ServerConfig {
                 base_latency: 3,
@@ -27,6 +28,7 @@ impl Default for ExecutePipelineConfig {
                 queue_capacity: 2,
                 completions_per_cycle: 1,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             int_div: ServerConfig {
                 base_latency: 16,
@@ -34,6 +36,7 @@ impl Default for ExecutePipelineConfig {
                 queue_capacity: 2,
                 completions_per_cycle: 1,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             fp: ServerConfig {
                 base_latency: 4,
@@ -41,6 +44,7 @@ impl Default for ExecutePipelineConfig {
                 queue_capacity: 4,
                 completions_per_cycle: 1,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             sfu: ServerConfig {
                 base_latency: 8,
@@ -48,6 +52,7 @@ impl Default for ExecutePipelineConfig {
                 queue_capacity: 2,
                 completions_per_cycle: 1,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
         }
     }
@@ -147,6 +152,7 @@ mod tests {
                 queue_capacity: 1,
                 completions_per_cycle: 1,
                 warmup_latency: 0,
+            cycles_per_request: 0,
             },
             ..Default::default()
         };

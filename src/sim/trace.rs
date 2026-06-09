@@ -40,6 +40,9 @@ pub struct Line {
     pub csr_imm: u8,
     pub tmask: u32,
     pub raw: u64,
+    /// Timing-model cycle at which this instruction issued (0 in functional-only mode,
+    /// where it carries the functional step count instead).
+    pub cycle: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +54,8 @@ pub struct MemTraceLine {
     pub address: u32,
     pub size: u32,
     pub data: u32,
+    /// Timing-model cycle at which this memory access issued.
+    pub cycle: u64,
 }
 
 impl fmt::Display for Line {
@@ -75,10 +80,11 @@ impl Tracer {
         tracer
     }
 
-    pub fn record(&mut self, writebacks: &[Option<Writeback>]) {
+    pub fn record(&mut self, writebacks: &[Option<Writeback>], now: u64) {
         for (wid, (wb, buf)) in zip(writebacks.iter(), self.bufs.as_mut_slice()).enumerate() {
             if let Some(wb) = wb {
                 let line = Line {
+                    cycle: now,
                     warp_id: wid as u32,
                     pc: wb.inst.pc,
                     opcode: wb.inst.opcode,
@@ -145,8 +151,11 @@ impl MemTracer {
         }
     }
 
-    pub fn record(&mut self, lines: &[MemTraceLine]) {
-        self.buf.extend(lines.iter().cloned());
+    pub fn record(&mut self, lines: &[MemTraceLine], now: u64) {
+        self.buf.extend(lines.iter().cloned().map(|mut l| {
+            l.cycle = now;
+            l
+        }));
     }
 
     pub fn consume(&mut self) -> Option<MemTraceLine> {

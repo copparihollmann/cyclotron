@@ -208,6 +208,13 @@ impl CyclotronTop {
         let mut gmem = FlatMemory::new(Some(config.mem_config));
         gmem.copy_elf(&imem);
 
+        // The RTL physical-register-file limit (Rename.scala globalOverSubscription)
+        // is modeled at RUNTIME in MuonCore::track_register_pressure, which counts
+        // distinct (warp, rd) first-writes over actually-executed instructions. The
+        // old static byte-decode here over-counted (it decoded embedded data/constants
+        // as instructions, inflating the distinct-rd set) and false-rejected legal
+        // kernels, so it has been removed in favor of the faithful runtime counter.
+
         let gmem = Arc::new(RwLock::new(gmem));
 
         // TODO: parameterize

@@ -20,11 +20,12 @@ impl TraceDb {
         let has_regs = decoded_inst(line).has_regs();
         self.conn
             .execute(
-                "INSERT INTO inst (cluster_id, core_id, warp, pc, lane_mask, has_rs1, rs1_id, rs1_data, has_rs2, rs2_id, rs2_data)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO inst (cluster_id, core_id, cycle, warp, pc, lane_mask, has_rs1, rs1_id, rs1_data, has_rs2, rs2_id, rs2_data)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 (
                     cluster_id,
                     core_id,
+                    line.cycle as i64,
                     line.warp_id,
                     line.pc,
                     line.tmask,
@@ -44,13 +45,14 @@ impl TraceDb {
         self.conn
             .execute(
                 &format!(
-                    "INSERT INTO {table} (cluster_id, core_id, lane_id, store, address, size, data)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+                    "INSERT INTO {table} (cluster_id, core_id, lane_id, req_cycle, store, address, size, data)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
                 ),
                 (
                     cluster_id,
                     core_id,
                     line.lane_id,
+                    line.cycle as i64,
                     line.store,
                     line.address,
                     line.size,

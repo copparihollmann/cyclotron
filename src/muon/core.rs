@@ -28,6 +28,18 @@ pub struct MuonCore {
     tracer: Arc<Tracer>,
     mem_tracer: Arc<MemTracer>,
     timing_mode: TimingMode,
+
+    /// Runtime model of the RTL Rename stage's physical-register pool
+    /// (Rename.scala globalOverSubscription). Counts distinct (warp, fp, rd)
+    /// first-writes during actual execution — mirroring `assigning = valid &&
+    /// writesToRd && !assigned(wid)(rd)`. Faithful where the static byte-decode
+    /// was not (it decoded embedded constants as instructions). num_phys_regs==0
+    /// disables the check; otherwise a panic fires when the global count reaches
+    /// num_phys_regs, exactly as the RTL assert at Rename.scala:123.
+    reg_assigned: std::collections::HashSet<(usize, u8)>,
+    reg_global_count: usize,
+    num_phys_regs: usize,
+    num_warps: usize,
 }
 
 enum TimingMode {
@@ -71,6 +83,10 @@ impl MuonCore {
             tracer: Arc::new(Tracer::new(&config)),
             mem_tracer: Arc::new(MemTracer::new()),
             timing_mode,
+            reg_assigned: std::collections::HashSet::new(),
+            reg_global_count: 0,
+            num_phys_regs: config.num_phys_regs as usize,
+            num_warps: config.num_warps,
         };
 
         info!(
@@ -289,15 +305,73 @@ impl MuonCore {
             }
         }
 
+        if self.num_phys_regs > 0 {
+            self.track_register_pressure(&writebacks);
+        }
+
         let tracer = Arc::get_mut(&mut self.tracer).expect("failed to get tracer");
-        tracer.record(&writebacks);
+        tracer.record(&writebacks, now);
         let mem_tracer = Arc::get_mut(&mut self.mem_tracer).expect("failed to get mem tracer");
-        mem_tracer.record(&mem_trace_lines);
+        mem_tracer.record(&mem_trace_lines, now);
 
         self.scheduler.tick_one();
         self.warps.iter_mut().for_each(Warp::tick_one);
 
         Ok(())
+    }
+
+    /// Mirror the RTL Rename stage's physical-register accounting
+    /// (Rename.scala globalOverSubscription). The Muon wide ISA decodes rd from
+    /// inst.sel(16,9) — an 8-bit native architectural-register id that already
+    /// distinguishes the fp/int/predicate banks (numArchRegs=128), so the faithful
+    /// key is simply (warp, rd_addr), matching `assigned(wid)(decoded.rd)`. Each
+    /// committed instruction that writes a register contributes one first-write to
+    /// the shared pool exactly like `assigning = valid && writesToRd &&
+    /// !assigned(wid)(rd)`; the monotonic globalCounter asserts at num_phys_regs.
+    /// We panic with the same meaning. Because this only sees real executed
+    /// instructions it cannot over-count from data decoded as code (the failure mode
+    /// that made the static byte-decode unusable).
+    fn track_register_pressure(&mut self, writebacks: &[Option<Writeback>]) {
+        for (wid, wb) in writebacks.iter().enumerate() {
+            let Some(wb) = wb else { continue };
+            // writesToRd: the instruction actually produced a register result this
+            // cycle (stores/branches/fences carry no rd_data). ISA-encoding agnostic.
+            let writes_rd = wb.rd_data.iter().any(|d| d.is_some());
+            let rd = wb.rd_addr;
+            // The zero register (rd 0) is hardwired / always pre-mapped -> never counted.
+            if !writes_rd || rd == 0 {
+                continue;
+            }
+            if self.reg_assigned.insert((wid, rd)) {
+                self.reg_global_count += 1;
+                if self.reg_global_count == 1
+                    || self.reg_global_count % 16 == 0
+                    || self.reg_global_count + 8 >= self.num_phys_regs
+                {
+                    let mut per_warp = vec![0usize; self.num_warps];
+                    for (w, _) in self.reg_assigned.iter() {
+                        if *w < per_warp.len() {
+                            per_warp[*w] += 1;
+                        }
+                    }
+                    let active = per_warp.iter().filter(|c| **c > 0).count();
+                    let maxw = per_warp.iter().copied().max().unwrap_or(0);
+                    eprintln!(
+                        "Cyclotron: rename pool: {} distinct (warp,rd) first-writes (limit {}); \
+                         active_warps={} max_per_warp={} per_warp={:?}",
+                        self.reg_global_count, self.num_phys_regs, active, maxw, per_warp
+                    );
+                }
+                if self.reg_global_count >= self.num_phys_regs {
+                    panic!(
+                        "globalOverSubscription: {} distinct (warp,rd) first-writes reached \
+                         num_phys_regs={} ({} warps) — RTL Rename.scala:123 asserts here; this \
+                         kernel is unrunnable on the RadianceSingleClusterConfig.",
+                        self.reg_global_count, self.num_phys_regs, self.num_warps
+                    );
+                }
+            }
+        }
     }
 
     /// Execute an issued instruction from a single warp in the core's functional unit backend.
