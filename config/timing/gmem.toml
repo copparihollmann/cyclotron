@@ -10,7 +10,7 @@ queue_capacity = 8
 
 [gmem.levels.data]
 base_latency = 2
-bytes_per_cycle = 64
+bytes_per_cycle = 6
 queue_capacity = 8
 
 [gmem.levels.mshr]
@@ -28,7 +28,7 @@ queue_capacity = 16
 
 [gmem.levels.data]
 base_latency = 6
-bytes_per_cycle = 64
+bytes_per_cycle = 6
 queue_capacity = 16
 
 [gmem.levels.mshr]
@@ -56,7 +56,7 @@ queue_capacity = 16
 
 [gmem.levels.data]
 base_latency = 6
-bytes_per_cycle = 64
+bytes_per_cycle = 6
 queue_capacity = 16
 
 [gmem.levels.mshr]
