@@ -234,7 +234,7 @@ impl Warp {
         // execute
         let writeback = catch_unwind(AssertUnwindSafe(|| {
             let ex_wb = self.execute_nomem(issued, tmask, scheduler, neutrino);
-            self.mem(&ex_wb, smem, None)
+            self.mem(&ex_wb, smem, None, None)
         }));
 
         // writeback
@@ -338,7 +338,7 @@ impl Warp {
         }
 
         let writeback = catch_unwind(AssertUnwindSafe(|| {
-            self.execute(issued, tmask, scheduler, neutrino, smem)
+            self.execute(issued, tmask, scheduler, neutrino, smem, Some(now))
         }));
 
         match writeback {
@@ -420,9 +420,10 @@ impl Warp {
         scheduler: &mut Scheduler,
         neutrino: &mut Neutrino,
         smem: &mut FlatMemory,
+        now: Option<Cycle>,
     ) -> (Writeback, Vec<MemTraceLine>) {
         let ex_wb = self.execute_nomem(issued, tmask, scheduler, neutrino);
-        self.mem(&ex_wb, smem, None)
+        self.mem(&ex_wb, smem, None, now)
     }
 
     /// Execute stage, but only generates mem requests without serving them with the internal
@@ -465,6 +466,7 @@ impl Warp {
         ex_writeback: &ExWriteback,
         smem: &mut FlatMemory,
         external_mem_resp: Option<&Vec<Option<MemResponse>>>,
+        now: Option<Cycle>,
     ) -> (Writeback, Vec<MemTraceLine>) {
         let external_mem = external_mem_resp.is_some();
         let mem_responses = ex_writeback
@@ -479,7 +481,7 @@ impl Warp {
                             .expect("missing mem response for a lane")
                             .clone()
                     } else {
-                        self.mem_response(req, smem)
+                        self.mem_response(req, smem, now)
                     }
                 })
             })
@@ -544,10 +546,15 @@ impl Warp {
     }
 
     /// Handle a per-lane memory request and generate a MemResponse.
-    pub fn mem_response(&mut self, mem_req: &MemRequest, smem: &mut FlatMemory) -> MemResponse {
+    pub fn mem_response(
+        &mut self,
+        mem_req: &MemRequest,
+        smem: &mut FlatMemory,
+        now: Option<Cycle>,
+    ) -> MemResponse {
         let mut gmem = self.gmem.write().expect("lock poisoned");
-        let mem = if mem_req.is_smem {
-            smem
+        let mem: &mut FlatMemory = if mem_req.is_smem {
+            &mut *smem
         } else {
             gmem.deref_mut()
         };
@@ -573,6 +580,14 @@ impl Warp {
             if mem_req.is_smem {
                 let core = self.conf().lane_config.core_id;
                 smem_coh().lock().unwrap().insert(addr_aligned, (core, false));
+
+                // MX-Gemmini command stream: the kernel pushes RoCC commands to the
+                // Gemmini MMIO block with `sw.shared`. Run the accelerator here (rather
+                // than inside FlatMemory) because its loop_ws load phase DMAs A/B
+                // operands out of gmem, so it needs both memories in scope.
+                if smem.mx_matches(addr as u64) {
+                    smem.mx_on_write(addr as u64, gmem.deref_mut(), now);
+                }
             }
 
             MemResponse {
@@ -600,6 +615,11 @@ impl Warp {
                 }
             }
 
+            // A load of the accelerator's BUSY/OCCUPANCY regs (the gemmini_fence spin)
+            // must observe work outstanding at the *current* cycle.
+            if mem_req.is_smem && mem.mx_matches(addr_aligned as u64) {
+                mem.mx_refresh_status(now);
+            }
             let load_data = mem.read_n::<4>(addr_aligned as usize).expect("load failed");
 
             // byte-masking will be handled in Execute::mem

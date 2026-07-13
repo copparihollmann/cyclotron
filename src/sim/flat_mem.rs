@@ -2,7 +2,9 @@ use std::io::Write;
 
 use crate::{
     base::mem::HasMemory,
+    muon::mxgemmini::{MxConfig, MxGemminiDevice},
     sim::{config::MemConfig, elf::ElfBackedMem},
+    timeq::Cycle,
 };
 
 /// Gigantic 4 GB vector to model memory space; relies on lazy allocation within OS to avoid actually
@@ -11,6 +13,10 @@ use crate::{
 pub struct FlatMemory {
     bytes: Vec<u8>,
     config: Option<MemConfig>,
+    /// Functional MX-Gemmini accelerator, attached only to the SMEM instance when
+    /// enabled. Combined Muon+MX kernels push RoCC commands to the Gemmini MMIO
+    /// block via `.shared` stores; this executes the matmul on the SMEM scratchpad.
+    mxgemmini: Option<MxGemminiDevice>,
 }
 
 impl HasMemory for FlatMemory {
@@ -46,12 +52,68 @@ impl HasMemory for FlatMemory {
 impl FlatMemory {
     pub fn new(config: Option<MemConfig>) -> Self {
         let bytes = vec![0u8; 1 << 32];
-        Self { bytes, config }
+        Self {
+            bytes,
+            config,
+            mxgemmini: None,
+        }
     }
 
     pub fn new_with_size(size: usize, config: Option<MemConfig>) -> Self {
         let bytes = vec![0u8; size];
-        Self { bytes, config }
+        Self {
+            bytes,
+            config,
+            mxgemmini: None,
+        }
+    }
+
+    /// Attach the functional MX-Gemmini co-model (SMEM instance only). Initializes
+    /// the accelerator status registers so the kernel's fence polls pass. Gated by
+    /// the caller (e.g. an env flag) so SIMT-only runs are unaffected.
+    pub fn enable_mxgemmini(&mut self, cfg: MxConfig) {
+        let dev = MxGemminiDevice::new(cfg);
+        dev.init_status(&mut self.bytes);
+        self.mxgemmini = Some(dev);
+    }
+
+    /// True when an MX-Gemmini device is attached and `addr` lands in its MMIO window.
+    pub fn mx_matches(&self, addr: u64) -> bool {
+        self.mxgemmini
+            .as_ref()
+            .map_or(false, |dev| dev.matches_mmio(addr))
+    }
+
+    /// Run the MX-Gemmini command decode for a store that just landed at `addr`.
+    /// Driven from the LSU (`Warp::mem_response`) rather than `write_impl` because the
+    /// accelerator's `loop_ws` load phase DMAs A/B operands out of global memory, so
+    /// it needs both memories in scope. `self` is the SMEM (== the Gemmini scratchpad).
+    /// `now` is None in untimed runs (accelerator then completes instantaneously).
+    pub fn mx_on_write(&mut self, addr: u64, gmem: &mut FlatMemory, now: Option<Cycle>) {
+        // Move the device out so it can take `&mut self.bytes` without aliasing.
+        let Some(mut dev) = self.mxgemmini.take() else {
+            return;
+        };
+        dev.on_write(addr, &mut self.bytes, &mut gmem.bytes, now);
+        self.mxgemmini = Some(dev);
+    }
+
+    /// Republish the accelerator status registers for cycle `now`, so a load of
+    /// BUSY/OCCUPANCY (the kernel's `gemmini_fence` spin) observes outstanding work.
+    pub fn mx_refresh_status(&mut self, now: Option<Cycle>) {
+        let Some(dev) = self.mxgemmini.take() else {
+            return;
+        };
+        dev.refresh_status(&mut self.bytes, now);
+        self.mxgemmini = Some(dev);
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes
     }
 
     pub fn copy_elf(&mut self, elf: &ElfBackedMem) {

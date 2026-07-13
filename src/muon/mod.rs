@@ -5,5 +5,6 @@ pub mod execute;
 pub mod config;
 pub mod csr;
 pub mod gmem;
+pub mod mxgemmini;
 pub mod scheduler;
 pub mod warp;
