@@ -124,12 +124,34 @@ impl Sim {
         sim
     }
 
+    /// Dump a global-memory region at exit, for checking kernel results against a
+    /// host golden. Set `CYCLOTRON_DUMP_GMEM=<hex_addr>:<len_bytes>:<path>`.
+    fn dump_gmem_if_requested(&self) {
+        let Ok(spec) = std::env::var("CYCLOTRON_DUMP_GMEM") else {
+            return;
+        };
+        let parts: Vec<&str> = spec.split(':').collect();
+        if parts.len() != 3 {
+            eprintln!("CYCLOTRON_DUMP_GMEM must be <hex_addr>:<len>:<path>");
+            return;
+        }
+        let addr = usize::from_str_radix(parts[0].trim_start_matches("0x"), 16).unwrap_or(0);
+        let len: usize = parts[1].parse().unwrap_or(0);
+        let gmem = self.top.gmem.read().expect("gmem lock poisoned");
+        let bytes = &gmem.bytes()[addr..(addr + len).min(gmem.size_bytes())];
+        match std::fs::write(parts[2], bytes) {
+            Ok(()) => println!("dumped {len} bytes of gmem @{addr:#x} -> {}", parts[2]),
+            Err(e) => eprintln!("gmem dump failed: {e}"),
+        }
+    }
+
     pub fn simulate(&mut self) -> Result<(), u32> {
         self.top.reset();
         for cycle in 0..self.top.timeout {
             if self.top.finished() {
                 println!("simulation finished after {} cycles", cycle + 1);
                 self.write_timing_summary();
+                self.dump_gmem_if_requested();
                 return self.check_tohost();
             }
             self.tick();

@@ -1,5 +1,6 @@
 use crate::base::behavior::*;
 use crate::muon::core::MuonCore;
+use crate::muon::mxgemmini::MxConfig;
 use crate::neutrino::neutrino::Neutrino;
 use crate::sim::flat_mem::FlatMemory;
 use crate::sim::log::Logger;
@@ -27,6 +28,15 @@ impl Cluster {
             config.muon_config.smem_size,
             None,
         )));
+        // Combined Muon + MX-Gemmini kernels: attach the functional accelerator to
+        // this cluster's SMEM so RoCC commands pushed over the Gemmini MMIO block
+        // execute the matmul. Off by default; SIMT-only runs are unaffected.
+        if std::env::var("CYCLOTRON_MXGEMMINI").is_ok() {
+            shared_mem
+                .write()
+                .expect("shared memory lock poisoned")
+                .enable_mxgemmini(MxConfig::default());
+        }
         for cid in 0..config.muon_config.num_cores {
             cores.push(MuonCore::new(
                 Arc::new(config.muon_config),
@@ -58,6 +68,15 @@ impl Cluster {
             config.muon_config.smem_size,
             None,
         )));
+        // Combined Muon + MX-Gemmini kernels: attach the functional accelerator to
+        // this cluster's SMEM so RoCC commands pushed over the Gemmini MMIO block
+        // execute the matmul. Off by default; SIMT-only runs are unaffected.
+        if std::env::var("CYCLOTRON_MXGEMMINI").is_ok() {
+            shared_mem
+                .write()
+                .expect("shared memory lock poisoned")
+                .enable_mxgemmini(MxConfig::default());
+        }
         for cid in 0..config.muon_config.num_cores {
             let timing_core_id = id * config.muon_config.num_cores + cid;
             cores.push(MuonCore::new_timed(

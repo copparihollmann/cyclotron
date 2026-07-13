@@ -316,6 +316,7 @@ impl MuonCore {
             &mut self.scheduler,
             neutrino,
             &mut *shared_mem,
+            None, // untimed (difftest/RTL-driven) path: accelerator completes instantly
         );
         self.warps[warp_id].tick_one();
 
