@@ -192,6 +192,47 @@ impl Sim {
     }
 }
 
+/// Preload one or more raw weight/data blobs into global memory (DRAM) at fixed
+/// base addresses WITHOUT baking them into the kernel ELF. This is the runtime
+/// weight-load path for large-model e2e kernels (e.g. full-dim TinyLlama): the
+/// weights live in a separate binary rather than a compiled static C-array, so the
+/// ELF stays small and compile/link/DRAM-footprint scale.
+///
+/// Set `CYCLOTRON_WEIGHTS=<hex_base>:<path>[,<hex_base>:<path>...]`. Each blob is
+/// written verbatim into gmem starting at `hex_base` (a raw byte offset into the
+/// flat 4 GiB memory; the same address the kernel dereferences). Purely a
+/// harness/loadmem operation -- no RTL/DUT involvement.
+fn preload_weights_if_requested(gmem: &mut FlatMemory) {
+    let Ok(spec) = std::env::var("CYCLOTRON_WEIGHTS") else {
+        return;
+    };
+    for entry in spec.split(',').filter(|s| !s.is_empty()) {
+        let parts: Vec<&str> = entry.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            eprintln!(
+                "CYCLOTRON_WEIGHTS entries must be <hex_base>:<path> (got '{entry}')"
+            );
+            continue;
+        }
+        let base = usize::from_str_radix(parts[0].trim().trim_start_matches("0x"), 16)
+            .unwrap_or_else(|e| panic!("CYCLOTRON_WEIGHTS: bad hex base '{}': {e}", parts[0]));
+        let path = parts[1].trim();
+        let data = std::fs::read(path)
+            .unwrap_or_else(|e| panic!("CYCLOTRON_WEIGHTS: cannot read '{path}': {e}"));
+        let end = base + data.len();
+        assert!(
+            end <= gmem.size_bytes(),
+            "CYCLOTRON_WEIGHTS: blob [{base:#x}..{end:#x}] exceeds gmem size {:#x}",
+            gmem.size_bytes()
+        );
+        gmem.bytes_mut()[base..end].copy_from_slice(&data);
+        println!(
+            "Cyclotron: preloaded {} bytes of weights @{base:#x} from {path}",
+            data.len()
+        );
+    }
+}
+
 pub struct CyclotronConfig {
     pub timeout: u64, // TODO: use sim
     pub elf: PathBuf, // TODO: use sim
@@ -229,6 +270,7 @@ impl CyclotronTop {
         // in hardware too?
         let mut gmem = FlatMemory::new(Some(config.mem_config));
         gmem.copy_elf(&imem);
+        preload_weights_if_requested(&mut gmem);
 
         // The RTL physical-register-file limit (Rename.scala globalOverSubscription)
         // is modeled at RUNTIME in MuonCore::track_register_pressure, which counts
