@@ -1,37 +1,37 @@
 [lsu]
-link_capacity = 4
+link_capacity = 64
 
 [lsu.resources]
-address_entries = 16
-store_data_entries = 8
-load_data_entries = 16
+address_entries = 256
+store_data_entries = 128
+load_data_entries = 256
 
 [lsu.queues.global_ldq]
-queue_capacity = 8
+queue_capacity = 128
 bytes_per_cycle = 1024
 base_latency = 0
 completions_per_cycle = 1
 
 [lsu.queues.global_stq]
-queue_capacity = 4
+queue_capacity = 64
 bytes_per_cycle = 1024
 base_latency = 0
 completions_per_cycle = 1
 
 [lsu.queues.shared_ldq]
-queue_capacity = 4
+queue_capacity = 64
 bytes_per_cycle = 1024
 base_latency = 0
 completions_per_cycle = 1
 
 [lsu.queues.shared_stq]
-queue_capacity = 2
+queue_capacity = 32
 bytes_per_cycle = 1024
 base_latency = 0
 completions_per_cycle = 1
 
 [lsu.issue]
-queue_capacity = 1
+queue_capacity = 16
 bytes_per_cycle = 1024
 base_latency = 1
 completions_per_cycle = 1

@@ -5,7 +5,7 @@ mmio_size = 0x1000
 csr_addrs = []
 base_latency = 50
 bytes_per_cycle = 256
-queue_capacity = 8
+queue_capacity = 128
 completions_per_cycle = 1
 
 [tensor]
@@ -15,5 +15,5 @@ mmio_size = 0x1000
 csr_addrs = []
 base_latency = 50
 bytes_per_cycle = 256
-queue_capacity = 8
+queue_capacity = 128
 completions_per_cycle = 1
