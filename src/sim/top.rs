@@ -26,6 +26,16 @@ pub struct Sim {
 impl Sim {
     fn drain_traces(&mut self) {
         let Some(trace_db) = self.trace_db.as_ref() else {
+            // MuonCore records instruction and memory traces independently of
+            // SimConfig::trace.  A trace-disabled run therefore still has to
+            // discard those records every tick; otherwise long timing runs
+            // retain the full execution history in RAM.
+            for cluster in &mut self.top.clusters {
+                for core in &mut cluster.cores {
+                    core.get_tracer_mut().clear();
+                    core.get_mem_tracer_mut().clear();
+                }
+            }
             return;
         };
         let trace_db = trace_db.lock().expect("trace db lock poisoned");

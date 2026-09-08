@@ -142,6 +142,17 @@ impl Tracer {
     pub fn all_empty(&self) -> bool {
         self.bufs.iter().all(|buf| buf.len() == 0)
     }
+
+    /// Drop buffered trace records when the simulator was started without a
+    /// trace database.  Execution tracing is produced by the core regardless
+    /// of the CLI trace setting, so leaving these queues undrained makes a
+    /// trace-disabled simulation retain one large record per retired
+    /// instruction until the process exits.
+    pub fn clear(&mut self) {
+        for buf in &mut self.bufs {
+            buf.clear();
+        }
+    }
 }
 
 impl MemTracer {
@@ -164,5 +175,50 @@ impl MemTracer {
 
     pub fn all_empty(&self) -> bool {
         self.buf.is_empty()
+    }
+
+    /// Drop buffered memory-access traces when no trace database is active.
+    pub fn clear(&mut self) {
+        self.buf.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_discards_trace_disabled_instruction_and_memory_records() {
+        let config = MuonConfig {
+            num_warps: 2,
+            num_lanes: 1,
+            ..MuonConfig::default()
+        };
+        let mut inst = Tracer::new(&config);
+        let mut mem = MemTracer::new();
+
+        inst.bufs[0].push_back(Line::default());
+        inst.bufs[1].push_back(Line::default());
+        mem.record(
+            &[MemTraceLine {
+                warp_id: 0,
+                lane_id: 0,
+                is_smem: false,
+                store: false,
+                address: 0x1000,
+                size: 4,
+                data: 0,
+                cycle: 0,
+            }],
+            17,
+        );
+        assert!(!inst.all_empty());
+        assert!(!mem.all_empty());
+
+        inst.clear();
+        mem.clear();
+
+        assert!(inst.all_empty());
+        assert!(mem.all_empty());
     }
 }
