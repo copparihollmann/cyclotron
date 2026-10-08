@@ -18,7 +18,7 @@ use std::iter::zip;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::slice::from_raw_parts;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 
 use env_logger::Builder;
 use log::LevelFilter;
@@ -797,6 +797,12 @@ pub unsafe extern "C" fn cyclotron_trace_rs(
         }
     }
 
+    // Full Spatter traces can contain millions of vector memory operations.
+    // Skip only SQLite recording when requested; the RTL and diff test still run.
+    static TRACE_DISABLED: OnceLock<bool> = OnceLock::new();
+    if *TRACE_DISABLED.get_or_init(|| std::env::var_os("RADIANCE_DISABLE_CYCLOTRON_TRACE").is_some()) {
+        return;
+    }
     TRACE_CONN.with(|t| {
         let mut conn_opt = t.borrow_mut();
         if conn_opt.is_none() {
